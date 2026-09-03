@@ -10,7 +10,7 @@ import ir.ac.kntu.parser.ParsedCommand;
 import java.util.*;
 
 /**
- * Core query execution engine managing DDL and DML operations.
+ * Core query execution engine managing DDL, DML, and projected query operations.
  */
 public class DatabaseEngine {
     private final Database database;
@@ -103,8 +103,9 @@ public class DatabaseEngine {
         ensureTableExists(tableName);
 
         Table table = database.getTable(tableName);
-        String condition = command.getParameters().isEmpty() ? null : command.getParameters().get(0);
+        String condition = command.getParameters().isEmpty() ? null : command.getParameters().getFirst();
 
+        // 1. Filter matching rows
         List<Row> matchedRows = new ArrayList<>();
         for (Row row : table.getRows()) {
             if (evaluator.evaluateCondition(condition, row, table)) {
@@ -112,7 +113,97 @@ public class DatabaseEngine {
             }
         }
 
-        return new ExecutionResult(table.getColumns(), matchedRows);
+        // 2. Full projection if arguments clause [...] is omitted
+        List<String> projectionArgs = command.getArguments();
+        if (projectionArgs.isEmpty()) {
+            return new ExecutionResult(table.getColumns(), matchedRows);
+        }
+
+        // 3. Custom & computed column projection
+        List<Column> projectedColumns = buildProjectedColumns(projectionArgs, table);
+        List<Row> projectedRows = projectRows(matchedRows, projectionArgs, projectedColumns, table);
+
+        return new ExecutionResult(projectedColumns, projectedRows);
+    }
+
+    private List<Column> buildProjectedColumns(List<String> projectionArgs, Table table) {
+        List<Column> columns = new ArrayList<>();
+
+        for (String rawArg : projectionArgs) {
+            String expr = rawArg.trim();
+            validateProjectionExpression(expr);
+
+            if (table.hasColumn(expr.toLowerCase())) {
+                // Direct column reference
+                columns.add(table.getColumn(expr.toLowerCase()));
+            } else {
+                // Arithmetic computed expression
+                DataType inferredType = inferExpressionType(expr, table);
+                columns.add(new Column(expr, inferredType));
+            }
+        }
+
+        return columns;
+    }
+
+    private List<Row> projectRows(List<Row> sourceRows,
+                                  List<String> projectionArgs,
+                                  List<Column> projectedColumns,
+                                  Table table) {
+        List<Row> result = new ArrayList<>();
+
+        for (Row sourceRow : sourceRows) {
+            Row projectedRow = new Row();
+            for (int i = 0; i < projectionArgs.size(); i++) {
+                String expr = projectionArgs.get(i).trim();
+                Column targetCol = projectedColumns.get(i);
+                Value evaluatedVal = evaluator.evaluateExpression(expr, sourceRow, table);
+                projectedRow.set(targetCol.getName(), evaluatedVal);
+            }
+            result.add(projectedRow);
+        }
+
+        return result;
+    }
+
+    private void validateProjectionExpression(String expr) {
+        if (expr.isEmpty()) {
+            throw new ValidationException("Projected column expression cannot be empty");
+        }
+        if (expr.contains(">") || expr.contains("<") || expr.contains("=") || expr.contains("!")) {
+            throw new ValidationException("Comparison operators (<, >, <=, >=, =, !=) are not permitted in column projections: " + expr);
+        }
+    }
+
+    private DataType inferExpressionType(String expr, Table table) {
+        boolean hasDouble = false;
+        String[] tokens = expr.split("[+-]");
+
+        for (String rawToken : tokens) {
+            String token = rawToken.trim();
+            if (token.isEmpty()) {
+                continue;
+            }
+
+            if (table.hasColumn(token.toLowerCase())) {
+                DataType colType = table.getColumn(token.toLowerCase()).getType();
+                if (colType == DataType.DBL) {
+                    hasDouble = true;
+                } else if (colType != DataType.INT) {
+                    throw new ValidationException("Arithmetic operations in projection require numeric columns: " + token);
+                }
+            } else if (token.contains(".")) {
+                hasDouble = true;
+            } else {
+                try {
+                    Long.parseLong(token);
+                } catch (NumberFormatException e) {
+                    throw new ValidationException("Invalid token in column projection expression: " + token);
+                }
+            }
+        }
+
+        return hasDouble ? DataType.DBL : DataType.INT;
     }
 
     private ExecutionResult executeSet(ParsedCommand command) {
@@ -125,7 +216,6 @@ public class DatabaseEngine {
             throw new ValidationException("Set command requires variable assignments inside {...}");
         }
 
-        // Validate all target columns and type conversions upfront
         Map<String, Value> parsedUpdates = new LinkedHashMap<>();
         for (Map.Entry<String, String> entry : variables.entrySet()) {
             String colName = entry.getKey().toLowerCase();
@@ -136,7 +226,7 @@ public class DatabaseEngine {
             parsedUpdates.put(colName, Value.of(col.getType(), entry.getValue()));
         }
 
-        String condition = command.getParameters().isEmpty() ? null : command.getParameters().get(0);
+        String condition = command.getParameters().isEmpty() ? null : command.getParameters().getFirst();
         int affectedCount = 0;
 
         for (Row row : table.getRows()) {
@@ -154,7 +244,7 @@ public class DatabaseEngine {
         ensureTableExists(tableName);
 
         Table table = database.getTable(tableName);
-        String condition = command.getParameters().isEmpty() ? null : command.getParameters().get(0);
+        String condition = command.getParameters().isEmpty() ? null : command.getParameters().getFirst();
 
         List<Row> toDelete = new ArrayList<>();
         for (Row row : table.getRows()) {
