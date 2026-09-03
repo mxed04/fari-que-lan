@@ -10,7 +10,7 @@ import ir.ac.kntu.parser.ParsedCommand;
 import java.util.*;
 
 /**
- * Core query execution engine managing DDL, DML, and projected query operations.
+ * Core query execution engine managing DDL, DML, Projections, and Group By aggregations.
  */
 public class DatabaseEngine {
     private final Database database;
@@ -103,7 +103,7 @@ public class DatabaseEngine {
         ensureTableExists(tableName);
 
         Table table = database.getTable(tableName);
-        String condition = command.getParameters().isEmpty() ? null : command.getParameters().getFirst();
+        String condition = command.getParameters().isEmpty() ? null : command.getParameters().get(0);
 
         // 1. Filter matching rows
         List<Row> matchedRows = new ArrayList<>();
@@ -113,13 +113,21 @@ public class DatabaseEngine {
             }
         }
 
-        // 2. Full projection if arguments clause [...] is omitted
+        // 2. Check for Group By <...> aggregation
+        // Note: adjust 'getTypes()' if your ParsedCommand uses a different getter (e.g., getGroupings)
+        List<String> groupByArgs = command.getTypes();
+        if (groupByArgs != null && !groupByArgs.isEmpty()) {
+            String groupByColName = groupByArgs.get(0).trim().toLowerCase();
+            return executeGroupBy(matchedRows, groupByColName, table);
+        }
+
+        // 3. Full projection if arguments clause [...] is omitted
         List<String> projectionArgs = command.getArguments();
         if (projectionArgs.isEmpty()) {
             return new ExecutionResult(table.getColumns(), matchedRows);
         }
 
-        // 3. Custom & computed column projection
+        // 4. Custom & computed column projection
         List<Column> projectedColumns = buildProjectedColumns(projectionArgs, table);
         List<Row> projectedRows = projectRows(matchedRows, projectionArgs, projectedColumns, table);
 
@@ -144,6 +152,41 @@ public class DatabaseEngine {
         }
 
         return columns;
+    }
+
+    /**
+     * Groups filtered rows by a specific column and appends a computed 'count' column.
+     */
+    private ExecutionResult executeGroupBy(List<Row> rows, String colName, Table table) {
+        if (!table.hasColumn(colName)) {
+            throw new ValidationException("Group by column not found in table: " + colName);
+        }
+
+        Column groupByCol = table.getColumn(colName);
+        Column countCol = new Column("count", DataType.INT);
+
+        // Group rows using String representation of their values to guarantee equality matching
+        Map<String, List<Row>> groups = new LinkedHashMap<>();
+        for (Row row : rows) {
+            Value val = row.get(colName);
+            String key = (val == null || val.getRaw() == null) ? "null" : val.toString();
+            groups.computeIfAbsent(key, k -> new ArrayList<>()).add(row);
+        }
+
+        List<Column> resultCols = List.of(groupByCol, countCol);
+        List<Row> resultRows = new ArrayList<>();
+
+        for (List<Row> groupRows : groups.values()) {
+            Row firstRow = groupRows.get(0);
+            Row newRow = new Row();
+            // Retain the original value typed object for the group column
+            newRow.set(colName, firstRow.get(colName));
+            // Add the aggregation count
+            newRow.set("count", new Value(DataType.INT, (long) groupRows.size()));
+            resultRows.add(newRow);
+        }
+
+        return new ExecutionResult(resultCols, resultRows);
     }
 
     private List<Row> projectRows(List<Row> sourceRows,
