@@ -38,7 +38,7 @@ public class ReplEngine {
 
     /**
      * Starts the interactive command-reading loop.
-     * Keeps running until 'quit' is encountered or input stream ends.
+     * Keeps running until 'quit' is encountered or the input stream ends.
      */
     public void start() {
         Scanner scanner = new Scanner(in);
@@ -69,6 +69,9 @@ public class ReplEngine {
 
     /**
      * Renders execution outputs according to command type specifications.
+     *
+     * @param commandType type of executed FQL command
+     * @param result      execution payload containing columns, rows, or counts
      */
     private void renderResult(CommandType commandType, ExecutionResult result) {
         if (result.isEmptyResult()) {
@@ -80,35 +83,15 @@ public class ReplEngine {
             return;
         }
 
-        // Render table records for ADD and GET queries
+        // Render formatted tabular output for ADD and GET queries
         List<Column> columns = result.getColumns();
         List<Row> rows = result.getRows();
 
-        if (columns.isEmpty()) {
-            return;
-        }
-
-        // Print header
-        StringBuilder header = new StringBuilder();
-        for (int i = 0; i < columns.size(); i++) {
-            header.append(columns.get(i).getName());
-            if (i < columns.size() - 1) {
-                header.append(" | ");
+        if (!columns.isEmpty()) {
+            String formattedTable = TableRenderer.render(columns, rows);
+            if (!formattedTable.isEmpty()) {
+                out.println(formattedTable);
             }
-        }
-        out.println(header);
-
-        // Print row values
-        for (Row row : rows) {
-            StringBuilder rowLine = new StringBuilder();
-            for (int i = 0; i < columns.size(); i++) {
-                String colName = columns.get(i).getName();
-                rowLine.append(row.get(colName).toString());
-                if (i < columns.size() - 1) {
-                    rowLine.append(" | ");
-                }
-            }
-            out.println(rowLine);
         }
     }
 }
