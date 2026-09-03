@@ -5,6 +5,8 @@ import ir.ac.kntu.model.*;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Evaluates filter conditions and arithmetic expressions against database rows.
@@ -13,11 +15,6 @@ public class ExpressionEvaluator {
 
     /**
      * Evaluates whether a given row satisfies the condition expression.
-     *
-     * @param condition raw condition string from parameters
-     * @param row       target row
-     * @param table     table schema metadata
-     * @return true if matched, false otherwise
      */
     public boolean evaluateCondition(String condition, Row row, Table table) {
         if (condition == null || condition.isBlank()) {
@@ -50,8 +47,21 @@ public class ExpressionEvaluator {
             return Value.of(DataType.STR, trimmed);
         }
 
-        // Check for arithmetic operators '+' and '-'
-        List<String> tokens = tokenizeArithmetic(trimmed);
+        // Robust regex-based tokenization for arithmetic expressions
+        List<String> tokens = new ArrayList<>();
+        Matcher m = Pattern.compile("([+-])|([^+-]+)").matcher(trimmed);
+        while (m.find()) {
+            String token = m.group().trim();
+            if (!token.isEmpty()) {
+                tokens.add(token);
+            }
+        }
+
+        if (tokens.isEmpty()) {
+            return Value.of(DataType.INT, "0");
+        }
+
+        // Single operand or column reference
         if (tokens.size() == 1) {
             return resolveOperand(tokens.get(0), row, table);
         }
@@ -83,22 +93,22 @@ public class ExpressionEvaluator {
             }
         }
 
-        if (hasDouble) {
-            return new Value(DataType.DBL, result);
-        } else {
-            return new Value(DataType.INT, (long) result);
-        }
+        return hasDouble ? new Value(DataType.DBL, result) : new Value(DataType.INT, (long) result);
     }
 
+    /**
+     * Resolves a token to a column value or a raw numeric/string literal.
+     */
     private Value resolveOperand(String operand, Row row, Table table) {
         String token = operand.trim();
         if (token.startsWith("\"") && token.endsWith("\"") && token.length() >= 2) {
             return Value.of(DataType.STR, token);
         }
 
-        // Column reference
-        if (table.hasColumn(token)) {
-            return row.get(token);
+        // Case-insensitive column reference
+        String lowerToken = token.toLowerCase();
+        if (table.hasColumn(lowerToken)) {
+            return row.get(lowerToken);
         }
 
         // Number literal: Integer or Double
@@ -109,33 +119,7 @@ public class ExpressionEvaluator {
                 return Value.of(DataType.INT, token);
             }
         } catch (Exception e) {
-            // Check if user queried an invalid/non-existent column name
             throw new ValidationException("Column '" + token + "' not found in table '" + table.getName() + "'");
         }
-    }
-
-    private List<String> tokenizeArithmetic(String expr) {
-        List<String> tokens = new ArrayList<>();
-        StringBuilder current = new StringBuilder();
-
-        boolean b = !current.toString().trim().isEmpty();
-        for (int i = 0; i < expr.length(); i++) {
-            char c = expr.charAt(i);
-            if (c == '+' || c == '-') {
-                if (b) {
-                    tokens.add(current.toString().trim());
-                    current.setLength(0);
-                }
-                tokens.add(String.valueOf(c));
-            } else {
-                current.append(c);
-            }
-        }
-
-        if (b) {
-            tokens.add(current.toString().trim());
-        }
-
-        return tokens;
     }
 }
