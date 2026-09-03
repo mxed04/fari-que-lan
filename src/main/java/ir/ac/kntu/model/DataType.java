@@ -19,7 +19,7 @@ public enum DataType {
             case "str" -> STR;
             case "dbl" -> DBL;
             case "time" -> TIME;
-            default -> throw new ValidationException("نوع داده نامعتبر است: " + typeStr);
+            default -> throw new ValidationException("Invalid data type: " + typeStr);
         };
     }
 
@@ -28,20 +28,21 @@ public enum DataType {
             return getDefaultValue();
         }
         String trimmed = rawValue.trim();
+
+        // Remove bounding quotes for all input values (especially for STR and TIME types)
+        if (trimmed.startsWith("\"") && trimmed.endsWith("\"") && trimmed.length() >= 2) {
+            trimmed = trimmed.substring(1, trimmed.length() - 1);
+        }
+
         try {
             return switch (this) {
                 case INT -> Long.parseLong(trimmed);
                 case DBL -> Double.parseDouble(trimmed);
-                case STR -> {
-                    if (trimmed.startsWith("\"") && trimmed.endsWith("\"") && trimmed.length() >= 2) {
-                        yield trimmed.substring(1, trimmed.length() - 1);
-                    }
-                    yield trimmed;
-                }
+                case STR -> trimmed;
                 case TIME -> LocalTime.parse(trimmed, TIME_FORMATTER);
             };
         } catch (NumberFormatException | DateTimeParseException e) {
-            throw new ValidationException("ناسازگاری مقدار '" + rawValue + "' با نوع " + this.name());
+            throw new ValidationException("Value mismatch: '" + rawValue + "' is not compatible with type " + this.name());
         }
     }
 
