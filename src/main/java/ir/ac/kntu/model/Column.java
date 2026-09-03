@@ -1,21 +1,27 @@
 package ir.ac.kntu.model;
 
 import ir.ac.kntu.exception.ValidationException;
-import java.util.Objects;
-import java.util.regex.Pattern;
 
+/**
+ * Represents a database table column schema or a computed projection column.
+ */
 public class Column {
-    private static final Pattern IDENTIFIER_PATTERN = Pattern.compile("^[a-zA-Z0-9_]+$");
-
     private final String name;
     private final DataType type;
 
     public Column(String name, DataType type) {
-        if (name == null || !IDENTIFIER_PATTERN.matcher(name.trim()).matches()) {
-            throw new ValidationException("نام ستون نامعتبر است: " + name);
+        if (name == null || name.trim().isEmpty()) {
+            throw new ValidationException("Column name cannot be null or empty");
         }
-        this.name = name.trim().toLowerCase(); // ذخیره یکدست برای نادیده گرفتن حساسیت به حروف بزرگ/کوچک
-        this.type = Objects.requireNonNull(type, "نوع ستون الزامی است");
+
+        // Relaxed regex validation to support both standard identifiers
+        // and computed arithmetic expressions (e.g., 'score + bonus', 'score - 1.0')
+        if (!name.matches("^[a-zA-Z0-9_ +\\-.\"]+$")) {
+            throw new ValidationException("Invalid column name: " + name);
+        }
+
+        this.name = name.trim();
+        this.type = type;
     }
 
     public String getName() {
@@ -24,23 +30,5 @@ public class Column {
 
     public DataType getType() {
         return type;
-    }
-
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        Column column = (Column) o;
-        return Objects.equals(name, column.name);
-    }
-
-    @Override
-    public int hashCode() {
-        return Objects.hash(name);
-    }
-
-    @Override
-    public String toString() {
-        return name + " " + type.name().toLowerCase();
     }
 }
